@@ -13,8 +13,11 @@ using EPiServer.Reference.Commerce.Site.Features.Search.Pages;
 namespace EPiServer.Reference.Commerce.Site.Features.Start.Pages
 {
     [ContentType(DisplayName = "Start page", GUID = "452d1812-7385-42c3-8073-c1b7481e7b20", Description = "", AvailableInEditMode = false)]
-    public class StartPage : PageData
+    public class StartPage : PageData, IContentData
     {
+        [Display(Name = "Main Catalog", GroupName = "Catalog Settings", Order = 200)]
+        public virtual ContentReference MainCatalogRoot { get; set; }
+
         [CultureSpecific]
         [Display(
                Name = "Start title",

@@ -27,23 +27,38 @@ using System.Web;
 using System.Web.Http;
 using System.Web.Mvc;
 using System.Web.Routing;
-using System.Web.WebPages;
 using EPiServer.Personalization.Commerce.Tracking;
+using EPiServer.Core;
+using System.Globalization;
+using EPiServer.Commerce.Catalog.ContentTypes;
+using Mediachase.Commerce.Catalog;
+using System.Web.WebPages;
+using EPiServer.Security;
 
 namespace EPiServer.Reference.Commerce.Site.Infrastructure
 {
     [ModuleDependency(typeof(EPiServer.Commerce.Initialization.InitializationModule))]
     public class SiteInitialization : IConfigurableModule
     {
+        private IContentRepository _contentRepository;
+        private ReferenceConverter _referenceConverter;
+        private Features.Start.Pages.StartPage _settingsPage = null;
+        private CultureInfo cultureInfo = null;
+
         public void Initialize(InitializationEngine context)
         {
+            _contentRepository = ServiceLocator.Current.GetInstance<IContentRepository>();
+            _referenceConverter = ServiceLocator.Current.GetInstance<ReferenceConverter>();
+
+            EPiServer.Global.RoutesRegistered += Global_RoutesRegistered;
+            
             CatalogRouteHelper.MapDefaultHierarchialRouter(RouteTable.Routes, false);
 
             GlobalFilters.Filters.Add(new HandleErrorAttribute());
             GlobalFilters.Filters.Add(new ReadOnlyFilter());
             GlobalFilters.Filters.Add(new AJAXLocalizationFilterAttribute());
 
-            context.Locate.Advanced.GetInstance<IDisplayChannelService>().RegisterDisplayMode(new DefaultDisplayMode(RenderingTags.Mobile)
+            context.Locate.Advanced.GetInstance<IDisplayChannelService>().RegisterDisplayMode(new System.Web.WebPages.DefaultDisplayMode(RenderingTags.Mobile)
             {
                 ContextCondition = r => r.GetOverriddenBrowser().IsMobileDevice
             });
@@ -63,6 +78,71 @@ namespace EPiServer.Reference.Commerce.Site.Infrastructure
 #if ACTIVATE_DEFAULT_PERSONALIZATION_WIDGETS_FEATURE
             SetupPersonalizationsWidgets(context);
 #endif
+        }
+
+        private void Global_RoutesRegistered(object sender, EPiServer.Web.Routing.RouteRegistrationEventArgs e)
+        {
+            _contentRepository = ServiceLocator.Current.GetInstance<IContentRepository>();
+            _referenceConverter = ServiceLocator.Current.GetInstance<ReferenceConverter>();
+
+            try
+            {
+                _settingsPage = _contentRepository.Get<Features.Start.Pages.StartPage>(ContentReference.StartPage, cultureInfo);
+
+                var catalogRoot = EnsureCatalogExistsAndSet();
+            } catch (Exception exc)
+            {
+                Console.WriteLine(exc.Message);
+            }
+        }
+
+        string CatalogName = "TestName";
+
+        private ContentReference EnsureCatalogExistsAndSet()
+        {
+            var mainCatalogRef = _settingsPage.MainCatalogRoot;
+            if (ContentReference.IsNullOrEmpty(mainCatalogRef))
+            {
+                //look for catalog
+                var existingCatalog = _contentRepository.GetChildren<CatalogContent>(_referenceConverter.GetRootLink())
+                            .FirstOrDefault(x => x.Name == CatalogName);
+
+                var catalogMissing = existingCatalog == null;
+                var republishCatalogRoot = catalogMissing || _settingsPage.MainCatalogRoot == null || (!catalogMissing && _settingsPage.MainCatalogRoot.ID != existingCatalog.ContentLink.ID);
+                if (catalogMissing)
+                {
+                    //if not exist, build it
+                    mainCatalogRef = BuildMainCatalog();
+                }
+                else
+                {
+                    mainCatalogRef = existingCatalog.ContentLink;
+                }
+
+                //if (republishCatalogRoot)
+                //{
+                //set main catalog property
+                var writeableSettingsPage = (Features.Start.Pages.StartPage)_settingsPage.CreateWritableClone();
+                writeableSettingsPage.MainCatalogRoot = mainCatalogRef;
+                _contentRepository.Publish(writeableSettingsPage, AccessLevel.NoAccess);
+                //}
+            }
+
+            return mainCatalogRef;
+        }
+
+        private ContentReference BuildMainCatalog()
+        {
+            var rootLink = _referenceConverter.GetRootLink();
+
+            var newMainCatalog = _contentRepository.GetDefault<CatalogContent>(rootLink, cultureInfo);
+
+            newMainCatalog.Name = CatalogName;
+            newMainCatalog.DefaultCurrency = "USD";
+            newMainCatalog.WeightBase = "lbs";
+            newMainCatalog.DefaultLanguage = "en";
+
+            return _contentRepository.Publish(newMainCatalog, AccessLevel.NoAccess);
         }
 
         public void ConfigureContainer(ServiceConfigurationContext context)
